@@ -1,7 +1,0 @@
-a.	Macro analysis for UK and SG region – understand the current systems at the broad level to define the target state for APIfication along with the Insurance functional consultant.
-b.	When we define the target state, Global solution aspects has to be considered, hence global system understand is required.
-c.	Micro analysis for UK region with Quotation and Account opening module; Identify the use case for POC; Design and implement the API;
-d.	Micro analysis for SG region with Quotation module; Identify the use case for POC; Design and implement the API;
-e.	Define the Global target state for APIfication of Insurance sector 
-f.	Gap analysis from API perspective needs to be done based on the current API implementations and for the desired target state of UK and SG region;
-g.	With the current system understanding and gap analysis outcomes, finalize the scope and provide the roadmap plan;
