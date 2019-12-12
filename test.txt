@@ -1,122 +1,13 @@
-
-The sender of this email is registered with Naukri.com as Info Edge India Ltd. company. To respond back directly to the Employer, please click on Reply button, or send an email to shamsul.arfeen@naukri.com
-Do Not forward this email, it contains links which allow direct login to your Naukri account.
-
- 
- 	
-	
-Shamsul Arfeen
-Company Recruiter | Info Edge India Ltd...
- 
- 
- 
-SALARY (₹)
-40.00 - 65.00 Lacs
- 	
-EXPERIENCE
-7 - 13 yrs
-LOCATION	
-Noida
-Apply Now	Reply
-Dear Tarun
-Position Title: Tech Architect
-
-Experience: 7 to 13 Yrs
-
-Qualifications: B.E. / B.Tech/M.Tech Degree
-
-Essential Skills:
-•Core Java, Spring, JPA, RabbitMQ/Kafka, Redis/Aerospike, Mysql, Mongodb/Cassandra
-
-Desired Skills:
-•Familiar with microservices architecture.
-•Apply SOA concepts to build loosely coupled applications, scalable applications Participate in the entire lifecycle of the product - design, architect, documentation, coding, testing and deployment.
-•Analyze technology and resource requirement for planning and feasibility of the project.
-•Good Troubleshooting, Debugging and Analytical Skills
-•Able to guide the team in various phases of development
-•Experience in building highly available, scalable high-performance systems and sites
-•Expertise in Core Java, J2EE, spring frameworks, Hibernate, JPA
-•Experience using and developing RESTful APIs
-•Experience with SQL such as Mysql
-•Experience with No SQL databases such as Mongo DB, Cassandra.
-•Experience with Message broker such as RabbitMQ/ Kafka.
-•Experience with Caching techniques using Redis, Aerospike etc.
-•Good programming skills with using BDD or TDD.
-•Good Skills and application of OOPS/Data Structures/Design Patterns
-•Build tools like Gradle.
-•Experience with Version control system like GIT.
-•Experience with XMPP, Solr/ES, Jenkins will be additional skills but not mandatory.
-•Well versed in Agile methodologies
-
-Job Description:
-•This role requires the ability to work within a high-performance team and the ability and initiative to develop and drive implementation of the Architect, database design, implementation and performance that will contribute to the upcoming & ongoing success of the project.
-•Work on the Architect, design, prototype, development and support of all elements of business applications.
-•Provide technical leadership to a team of excellent software engineers and make complex design decisions
-•Instill and follow good software development practices
-•Apply SOA concepts to build loosely coupled applications, scalable applications Participate in the entire lifecycle of the product - Architect, design, documentation, coding, testing and deployment.
-•End to end Ownership of Modules starting from Design, Architect, Develop, Deploy and Maintain
-•Analyze technology and resource requirement for planning and feasibility of the project.
-
-Let’s have a look - Who are we?
-Info Edge India Ltd is the largest Indian Internet company which owns products that affect the four main domains of our life i.e. Recruitment, Real Estate, Education, Matrimony. We are the first dot-com company in India to go public (NSE: NAUKRI). To this day, we are the only large internet firm which is profitable and cash-rich in India. 
-List of Products that InfoEdge India Ltd has Built, Own & Operates:
-1. Recruitment: Naukri.com, iimjobs.com, Hirist.com, NaukriGulf.com, FirstNaukri.com, NaukriFastForward, Quadrangle.
-2. Real Estate: 99 Acres.com
-3. Education: Shiksha.com
-4. Matrimony: Jeevansathi.com.
-5. AmbitionBox.com: A free inside look at company reviews and salaries posted anonymously by employees.
-6. BigShyft.com - Get confirmed interviews with top companies
-7. BlueOcean - New Business. (Product developing from scratch).
-8. iimjobs & Hirist
-Infoedge has investment in: Zomato.com, PolicyBazaar.com, Meritnation.com, MyDala.com, HappilyUnmarried, Canvera. For more details please visit - Info Edge Investee Companies 
-Here are some quick Financial figures about Info Edge: 
-ü Total Income 2018-19: ₹1209.4 CR
-ü Net Sales: ₹1098.3 CR
-ü Market Cap: 3 Billion $
-ü Staff strength: 4,500+
-
- 
- 
-Sounds Good ?
- 
-Apply Now	Reply
- 
-Thanks
-Shamsul Arfeen
-HR InfoEdge
- 
-FOLLOW
-
- 
-Shamsul Arfeen
-Company Recruiter
-Info Edge India Ltd.
-Noida
- 
-You are receiving this e-mail because your profile contained one or more of the following words that the recruiter searched on:" Java ", " SpringBoot ", " 'Spring Boot' ", " Microservices ", " 'Micro Services' ", " Rabbit ", " Rabbitmq ", " Kafka ", " Redis ", " aerospike "
-Is this job relevant to you? Yes No
- 
-	
-Be on top of
-recruiter's search
-Update your resume
- 	
-	
-Receive similar jobs
-in your inbox
-Set a job alert
-Your resume has only 30 seconds to impress a Recruiter
-Get your resume written by Experts
-Call 1800-102-5557 now! (Toll-Free)
-Disclaimer
-The sender of this email is registered with naukri.com as Info Edge India Ltd. (shamsul.arfeen@naukri.com, A-88, Sector-2, Uttar Pradesh - 201301) using Naukri.com services. The responsibility of checking the authenticity of offers/correspondence lies with you. If you consider the content of this email inappropriate or spam, you may: Forward this email to: compliance@naukri.com or you can Block this Company from searching your resume in the database.
-Please Note: This mail is a private message from the recruiter. We have enabled auto login for your convenience, you are strongly advised not to forward this email to protect your account from unauthorized access.
-Advisory: Please do not pay any money to anyone who promises to find you a job. This could be in the form of a registration fee or document processing fee or visa charges or any other pretext. The money could be asked for upfront or it could be asked after trust has been built after some correspondence has been exchanged. Also please note that in case you get a job offer or a letter of intent without having been through an interview process it is probably a scam and you should contact compliance@naukri.com for advise.
- 
-Hi Shamsul,
-
-Please find attached my updated resume .
-
-Regards,
-Tarun
-Show quoted text
+10+ years of experience in Java development (J2EE, J2SE 8), design and technical Leadership
+Degree or Masters in Computer Science or IT.
+Proven ability to drive large scale projects with deep understanding of Agile methodology - SCRUM.
+Working experience in building enterprise web application using Java / J2EE technologies
+Extensive experience in J2EE Framework, Design Patterns , Integration Frameworks, Application Security Frameworks (JWT), Spring , Spring Boot Micro Services, JPA, Hibernate, REST, SOAP
+Good Knowledge in Node Js , CSS , SCSS , SASS, Typescript ,HTML5, AJAX
+Excellent knowledge of databases( PostgreSQL ,My SQL)
+Experience in testing tools (JUnit, SOAP UI,Postman)
+Experience in code review and profiling tools, ability to troubleshoot memmory issues and Performance issues
+Experience in build tools – Maven, Gradle
+Experience in web application application servers - Tomcat etc
+Experience in continuous integration - Jenkins and Code versioning tools- Git
+Experience in application dockerization "
