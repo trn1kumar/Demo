@@ -1,13 +1,9 @@
-10+ years of experience in Java development (J2EE, J2SE 8), design and technical Leadership
-Degree or Masters in Computer Science or IT.
-Proven ability to drive large scale projects with deep understanding of Agile methodology - SCRUM.
-Working experience in building enterprise web application using Java / J2EE technologies
-Extensive experience in J2EE Framework, Design Patterns , Integration Frameworks, Application Security Frameworks (JWT), Spring , Spring Boot Micro Services, JPA, Hibernate, REST, SOAP
-Good Knowledge in Node Js , CSS , SCSS , SASS, Typescript ,HTML5, AJAX
-Excellent knowledge of databases( PostgreSQL ,My SQL)
-Experience in testing tools (JUnit, SOAP UI,Postman)
-Experience in code review and profiling tools, ability to troubleshoot memmory issues and Performance issues
-Experience in build tools – Maven, Gradle
-Experience in web application application servers - Tomcat etc
-Experience in continuous integration - Jenkins and Code versioning tools- Git
-Experience in application dockerization "
+I wanted to take a moment to express my heartfelt appreciation for your outstanding contributions and dedication to our team. Your hard work and commitment have not gone unnoticed, and I believe it's important to acknowledge the significant impact you've made.
+
+Your ability to [mention specific skills or qualities] has been invaluable to our projects. You consistently go above and beyond to ensure tasks are completed with precision and excellence. Your positive attitude and willingness to collaborate make you a true asset to our team, fostering a positive work environment.
+
+Furthermore, your ability to [mention a specific achievement or project] demonstrated your exceptional skills and dedication. Your efforts not only met but exceeded our expectations, and I'm confident that your continued contributions will lead to even more remarkable achievements in the future.
+
+Your professionalism, reliability, and willingness to take on challenges are truly commendable. I look forward to seeing you continue to grow and thrive in your role within our organization.
+
+Once again, thank you for your outstanding work and unwavering commitment. Your contributions are instrumental to our team's success, and I am grateful to have you as a valued member of our team.
