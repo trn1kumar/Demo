@@ -1,9 +1,136 @@
-I wanted to take a moment to express my heartfelt appreciation for your outstanding contributions and dedication to our team. Your hard work and commitment have not gone unnoticed, and I believe it's important to acknowledge the significant impact you've made.
+Core Java
+OOP Concepts:
 
-Your ability to [mention specific skills or qualities] has been invaluable to our projects. You consistently go above and beyond to ensure tasks are completed with precision and excellence. Your positive attitude and willingness to collaborate make you a true asset to our team, fostering a positive work environment.
+Explain the principles of Object-Oriented Programming.
+What is the difference between inheritance and composition?
+How does polymorphism work in Java? Provide examples.
 
-Furthermore, your ability to [mention a specific achievement or project] demonstrated your exceptional skills and dedication. Your efforts not only met but exceeded our expectations, and I'm confident that your continued contributions will lead to even more remarkable achievements in the future.
+String question :
+ Check if a String is a Palindrome
+ Find the First Non-Repeated Character in a String
+ Check if Two Strings are Anagrams
+ Find All Permutations of a String
+ Longest Substring Without Repeating Characters
+ Key Concepts of String Constant Pool
+Collections Framework:
 
-Your professionalism, reliability, and willingness to take on challenges are truly commendable. I look forward to seeing you continue to grow and thrive in your role within our organization.
+Describe the differences between ArrayList and LinkedList.
+How do you implement a custom Comparator?
+Explain the internal workings of a HashMap.
+What are the differences between HashSet and TreeSet?
+What is the difference between synchronized collections and Concurrent collections?
+How to sort a List of custom objects by a specific field in Java?
+Write a program to find the frequency of elements in a list.
+What are the differences between Collection API and Stream API?
+What is the difference between intermediate and terminal operations in streams?
+Explain the concept of lazy evaluation in streams with an example.
+How would you filter a list of integers to find only even numbers using the Stream API?
+Write a program to convert a list of strings to uppercase using the Stream API.
+How do you find the first element in a stream that matches a given condition?
+What are the benefits of using parallel streams? When should you use them?
+Demonstrate how to use a parallel stream to compute the sum of a large list of integers.
+Concurrency:
+What is the difference between Thread and Runnable in Java?
+Explain the difference between synchronized method and synchronized block.
+Explain the differences between synchronized and Lock interfaces.
+What is the purpose of the volatile keyword in Java?
+How do you create a thread-safe singleton class?
+What is the java.util.concurrent package and what are some key classes in it?
+What is a Future in Java? How do you use it?
 
-Once again, thank you for your outstanding work and unwavering commitment. Your contributions are instrumental to our team's success, and I am grateful to have you as a valued member of our team.
+Java 8 Features:
+
+Explain the use of lambda expressions and functional interfaces.
+What are streams and how do you use them?
+Describe the purpose of the Optional class.
+Exception Handling:
+
+What are the differences between checked and unchecked exceptions?
+How do you create custom exceptions?
+Explain the try-with-resources statement.
+Data Structures and Algorithms
+
+Array and Strings:
+
+Write a function to find the largest sum contiguous subarray (Kadane’s Algorithm).
+Implement a function to check if two strings are anagrams.
+Write a program to rotate an array by k positions.
+Linked Lists:
+
+How do you detect and remove a cycle in a linked list?
+Merge two sorted linked lists.
+Find the nth node from the end of a linked list.
+Trees and Graphs:
+
+Implement a binary search tree and perform in-order traversal.
+Write a function to find the lowest common ancestor in a binary tree.
+How do you implement depth-first search (DFS) and breadth-first search (BFS) for a graph?
+Dynamic Programming:
+
+Solve the knapsack problem.
+Write a function to find the longest increasing subsequence.
+Implement a solution for the coin change problem.
+Sorting and Searching:
+
+Implement quicksort and explain its time complexity.
+Write a binary search algorithm.
+Explain the differences between merge sort and heapsort.
+Tricky and Conceptual Questions
+Design Patterns:
+
+Explain the Singleton pattern and how to implement it.
+What is the Factory pattern? Provide an example.
+Describe the Observer pattern and its use cases.
+Memory Management:
+
+How does garbage collection work in Java?
+What are memory leaks and how can they be avoided?
+Explain the difference between stack and heap memory.
+Multithreading and Concurrency:
+
+What is a deadlock? How can it be prevented?
+Explain thread pooling and its advantages.
+Describe the ExecutorService framework.
+Java Virtual Machine (JVM):
+
+Explain the JVM architecture.
+What are the different garbage collection algorithms in Java?
+How do you optimize JVM performance?
+
+Spring Boot
+Basics:
+
+What is Spring Boot and how does it differ from the Spring Framework?
+Explain the purpose of the @SpringBootApplication annotation.
+How do you create a simple Spring Boot application?
+Configuration and Profiles:
+
+How do you externalize configuration in Spring Boot?
+Explain the use of application.properties and application.yml.
+How do you manage different environments using Spring Profiles?
+Dependency Injection:
+
+Explain the different types of dependency injection in Spring.
+What are @Autowired, @Component, @Service, and @Repository annotations?
+How do you create a custom Spring Boot starter?
+Data Access:
+
+How do you configure Spring Data JPA in a Spring Boot application?
+Explain the use of CrudRepository and JpaRepository.
+How do you implement pagination and sorting with Spring Data JPA?
+RESTful Services:
+
+How do you create a RESTful web service using Spring Boot?
+Explain the use of @RestController and @RequestMapping annotations.
+How do you handle exceptions in Spring Boot REST APIs?
+Coding Questions
+Easy:
+
+Write a function to reverse a string.
+Implement a function to check if a number is a palindrome.
+Write a program to find the Fibonacci sequence up to n terms.
+Medium:
+
+Write a function to perform a level-order traversal of a binary tree.
+Implement a cache using a Least Recently Used (LRU) eviction policy.
+
