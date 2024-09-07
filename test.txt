@@ -1,186 +1,103 @@
-<dependencies>
-    <dependency>
-        <groupId>com.zaxxer</groupId>
-        <artifactId>HikariCP</artifactId>
-        <version>5.0.1</version>
-    </dependency>
-    <dependency>
-        <groupId>com.oracle.database.jdbc</groupId>
-        <artifactId>ojdbc8</artifactId>
-        <version>19.3.0.0</version>
-    </dependency>
-    <dependency>
-        <groupId>org.slf4j</groupId>
-        <artifactId>slf4j-api</artifactId>import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+CREATE TABLE sync_status_table (
+    id            NUMBER PRIMARY KEY,
+    last_modified TIMESTAMP,
+    sync_status   VARCHAR2(20),
+    retry_count   NUMBER DEFAULT 0,
+    last_synced   TIMESTAMP
+);
+private static void processChunk(Connection sourceConnection, Connection targetConnection, int chunkId) throws SQLException {
+    String fetchSourceSQL = "SELECT id, data_column, last_modified FROM source_table WHERE MOD(id, ?) = ? AND last_modified > ?";
+    String upsertTargetSQL = "MERGE INTO target_table t USING (SELECT ? AS id, ? AS data_column FROM dual) s " +
+                             "ON (t.id = s.id) " +
+                             "WHEN MATCHED THEN UPDATE SET t.data_column = s.data_column " +
+                             "WHEN NOT MATCHED THEN INSERT (id, data_column) VALUES (s.id, s.data_column)";
+    
+    String insertSyncStatusSQL = "INSERT INTO sync_status_table (id, last_modified, sync_status) VALUES (?, ?, 'PENDING') ON DUPLICATE KEY UPDATE sync_status = 'PENDING'";
+    String updateSyncStatusSQL = "UPDATE sync_status_table SET sync_status = ?, retry_count = ?, last_synced = ? WHERE id = ?";
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+    long lastSyncTimestamp = getLastSyncTimestamp(targetConnection);
 
-public class ReliableOracleDatabaseSync {
+    try (PreparedStatement sourceStatement = sourceConnection.prepareStatement(fetchSourceSQL);
+         PreparedStatement targetStatement = targetConnection.prepareStatement(upsertTargetSQL);
+         PreparedStatement insertSyncStatusStatement = targetConnection.prepareStatement(insertSyncStatusSQL);
+         PreparedStatement updateSyncStatusStatement = targetConnection.prepareStatement(updateSyncStatusSQL)) {
 
-    private static final Logger logger = LoggerFactory.getLogger(ReliableOracleDatabaseSync.class);
+        sourceStatement.setInt(1, THREAD_POOL_SIZE);
+        sourceStatement.setInt(2, chunkId);
+        sourceStatement.setTimestamp(3, new java.sql.Timestamp(lastSyncTimestamp));
+        sourceStatement.setFetchSize(BATCH_SIZE);
 
-    private static final String SOURCE_DB_URL = "jdbc:oracle:thin:@//source_db_host:1521/source_service";
-    private static final String SOURCE_DB_USER = "source_user";
-    private static final String SOURCE_DB_PASSWORD = "source_password";
+        ResultSet resultSet = sourceStatement.executeQuery();
+        targetConnection.setAutoCommit(false);
 
-    private static final String TARGET_DB_URL = "jdbc:oracle:thin:@//target_db_host:1521/target_service";
-    private static final String TARGET_DB_USER = "target_user";
-    private static final String TARGET_DB_PASSWORD = "target_password";
+        int count = 0;
+        while (resultSet.next()) {
+            int id = resultSet.getInt("id");
+            String dataColumn = resultSet.getString("data_column");
+            Timestamp lastModified = resultSet.getTimestamp("last_modified");
 
-    private static final int BATCH_SIZE = 1000;
-    private static final int THREAD_POOL_SIZE = 10;
-    private static final int MAX_RETRIES = 5;
-    private static final long RETRY_DELAY_MS = 1000;
+            // Insert the record into the sync status table if it doesn't exist
+            insertSyncStatusStatement.setInt(1, id);
+            insertSyncStatusStatement.setTimestamp(2, lastModified);
+            insertSyncStatusStatement.executeUpdate();
 
-    public static void main(String[] args) throws InterruptedException {
-        HikariDataSource sourceDataSource = createDataSource(SOURCE_DB_URL, SOURCE_DB_USER, SOURCE_DB_PASSWORD);
-        HikariDataSource targetDataSource = createDataSource(TARGET_DB_URL, TARGET_DB_USER, TARGET_DB_PASSWORD);
+            // Set sync status to 'IN_PROGRESS' in the sync status table
+            updateSyncStatusStatement.setString(1, "IN_PROGRESS");
+            updateSyncStatusStatement.setInt(2, 0); // Retry count starts at 0
+            updateSyncStatusStatement.setTimestamp(3, null); // No last_synced timestamp yet
+            updateSyncStatusStatement.setInt(4, id);
+            updateSyncStatusStatement.executeUpdate();
 
-        try (Connection sourceConnection = sourceDataSource.getConnection();
-             Connection targetConnection = targetDataSource.getConnection()) {
+            targetStatement.setInt(1, id);
+            targetStatement.setString(2, dataColumn);
+            targetStatement.addBatch();
 
-            ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
-            for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-                final int chunkId = i;
-                executor.submit(() -> {
-                    try {
-                        processChunk(sourceConnection, targetConnection, chunkId);
-                    } catch (SQLException e) {
-                        logger.error("Error processing chunk " + chunkId, e);
-                    }
-                });
-            }
-            executor.shutdown();
-            executor.awaitTermination(1, TimeUnit.HOURS);
-
-        } catch (SQLException e) {
-            logger.error("Database connection error", e);
-        } finally {
-            sourceDataSource.close();
-            targetDataSource.close();
-        }
-    }
-
-    private static HikariDataSource createDataSource(String dbUrl, String dbUser, String dbPassword) {
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(dbUrl);
-        config.setUsername(dbUser);
-        config.setPassword(dbPassword);
-        config.setMaximumPoolSize(THREAD_POOL_SIZE);
-        config.setMinimumIdle(THREAD_POOL_SIZE);
-        config.setConnectionTimeout(30000);
-        config.setIdleTimeout(600000);
-        config.setMaxLifetime(1800000);
-
-        return new HikariDataSource(config);
-    }
-
-    private static void processChunk(Connection sourceConnection, Connection targetConnection, int chunkId) throws SQLException {
-        String fetchSourceSQL = "SELECT id, data_column FROM source_table WHERE MOD(id, ?) = ? AND last_modified > ?";
-        String upsertTargetSQL = "MERGE INTO target_table t USING (SELECT ? AS id, ? AS data_column FROM dual) s " +
-                                 "ON (t.id = s.id) " +
-                                 "WHEN MATCHED THEN UPDATE SET t.data_column = s.data_column " +
-                                 "WHEN NOT MATCHED THEN INSERT (id, data_column) VALUES (s.id, s.data_column)";
-
-        long lastSyncTimestamp = getLastSyncTimestamp(targetConnection);
-
-        try (PreparedStatement sourceStatement = sourceConnection.prepareStatement(fetchSourceSQL);
-             PreparedStatement targetStatement = targetConnection.prepareStatement(upsertTargetSQL)) {
-
-            sourceStatement.setInt(1, THREAD_POOL_SIZE);
-            sourceStatement.setInt(2, chunkId);
-            sourceStatement.setTimestamp(3, new java.sql.Timestamp(lastSyncTimestamp));
-            sourceStatement.setFetchSize(BATCH_SIZE);
-
-            ResultSet resultSet = sourceStatement.executeQuery();
-            targetConnection.setAutoCommit(false);
-
-            int count = 0;
-            while (resultSet.next()) {
-                int id = resultSet.getInt("id");
-                String dataColumn = resultSet.getString("data_column");
-
-                targetStatement.setInt(1, id);
-                targetStatement.setString(2, dataColumn);
-                targetStatement.addBatch();
-
-                count++;
-                if (count % BATCH_SIZE == 0) {
-                    executeBatchWithRetries(targetStatement, targetConnection);
-                }
-            }
-            executeBatchWithRetries(targetStatement, targetConnection);
-            resultSet.close();
-
-            updateLastSyncTimestamp(targetConnection, System.currentTimeMillis());
-        }
-    }
-
-    private static void executeBatchWithRetries(PreparedStatement targetStatement, Connection targetConnection) throws SQLException {
-        int retryCount = 0;
-        boolean success = false;
-        while (retryCount < MAX_RETRIES && !success) {
-            try {
-                targetStatement.executeBatch();
-                targetConnection.commit();
-                success = true;
-                logger.info("Batch executed successfully");
-            } catch (SQLException e) {
-                targetConnection.rollback();
-                retryCount++;
-                logger.warn("Retrying batch execution: attempt " + retryCount, e);
-                if (retryCount >= MAX_RETRIES) {
-                    throw e;
-                }
-                try {
-                    Thread.sleep(RETRY_DELAY_MS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
+            count++;
+            if (count % BATCH_SIZE == 0) {
+                executeBatchWithRetries(targetStatement, targetConnection, updateSyncStatusStatement);
             }
         }
-    }
+        executeBatchWithRetries(targetStatement, targetConnection, updateSyncStatusStatement);
+        resultSet.close();
 
-    private static long getLastSyncTimestamp(Connection connection) throws SQLException {
-        String query = "SELECT last_sync_timestamp FROM sync_metadata WHERE table_name = 'target_table'";
-        try (PreparedStatement statement = connection.prepareStatement(query);
-             ResultSet resultSet = statement.executeQuery()) {
-
-            long lastSyncTimestamp = 0;
-            if (resultSet.next()) {
-                lastSyncTimestamp = resultSet.getLong("last_sync_timestamp");
-            }
-            logger.info("Last sync timestamp: " + lastSyncTimestamp);
-            return lastSyncTimestamp;
-        }
-    }
-
-    private static void updateLastSyncTimestamp(Connection connection, long newTimestamp) throws SQLException {
-        String updateSQL = "UPDATE sync_metadata SET last_sync_timestamp = ? WHERE table_name = 'target_table'";
-        try (PreparedStatement statement = connection.prepareStatement(updateSQL)) {
-            statement.setLong(1, newTimestamp);
-            statement.executeUpdate();
-            logger.info("Updated last sync timestamp to: " + newTimestamp);
-        }
+        updateLastSyncTimestamp(targetConnection, System.currentTimeMillis());
     }
 }
 
-
-        <version>1.7.36</version>
-    </dependency>
-    <dependency>
-        <groupId>org.slf4j</groupId>
-        <artifactId>slf4j-simple</artifactId>
-        <version>1.7.36</version>
-    </dependency>
-</dependencies>
+private static void executeBatchWithRetries(PreparedStatement targetStatement, Connection targetConnection, PreparedStatement updateSyncStatusStatement) throws SQLException {
+    int retryCount = 0;
+    boolean success = false;
+    while (retryCount < MAX_RETRIES && !success) {
+        try {
+            targetStatement.executeBatch();
+            targetConnection.commit();
+            
+            // If batch is successful, mark records as 'SYNCED'
+            updateSyncStatusStatement.setString(1, "SYNCED");
+            updateSyncStatusStatement.setInt(2, retryCount);
+            updateSyncStatusStatement.setTimestamp(3, new Timestamp(System.currentTimeMillis()));
+            updateSyncStatusStatement.executeBatch();
+            
+            success = true;
+            logger.info("Batch executed successfully");
+        } catch (SQLException e) {
+            targetConnection.rollback();
+            retryCount++;
+            logger.warn("Retrying batch execution: attempt " + retryCount, e);
+            if (retryCount >= MAX_RETRIES) {
+                // Mark failed records as 'FAILED'
+                updateSyncStatusStatement.setString(1, "FAILED");
+                updateSyncStatusStatement.setInt(2, retryCount);
+                updateSyncStatusStatement.setTimestamp(3, null);
+                updateSyncStatusStatement.executeBatch();
+                throw e;
+            }
+            try {
+                Thread.sleep(RETRY_DELAY_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+}
 
