@@ -6,21 +6,18 @@ CREATE TABLE sync_status_table (
     last_synced   TIMESTAMP
 );
 private static void processChunk(Connection sourceConnection, Connection targetConnection, int chunkId) throws SQLException {
-    String fetchSourceSQL = "SELECT id, data_column, last_modified FROM source_table WHERE MOD(id, ?) = ? AND last_modified > ?";
+    String fetchSourceSQL = "SELECT id, data_column, sync_status FROM source_table WHERE MOD(id, ?) = ? AND last_modified > ? AND sync_status = 'PENDING'";
+    String updateSyncStatusSQL = "UPDATE source_table SET sync_status = ? WHERE id = ?";
     String upsertTargetSQL = "MERGE INTO target_table t USING (SELECT ? AS id, ? AS data_column FROM dual) s " +
                              "ON (t.id = s.id) " +
                              "WHEN MATCHED THEN UPDATE SET t.data_column = s.data_column " +
                              "WHEN NOT MATCHED THEN INSERT (id, data_column) VALUES (s.id, s.data_column)";
-    
-    String insertSyncStatusSQL = "INSERT INTO sync_status_table (id, last_modified, sync_status) VALUES (?, ?, 'PENDING') ON DUPLICATE KEY UPDATE sync_status = 'PENDING'";
-    String updateSyncStatusSQL = "UPDATE sync_status_table SET sync_status = ?, retry_count = ?, last_synced = ? WHERE id = ?";
 
     long lastSyncTimestamp = getLastSyncTimestamp(targetConnection);
 
     try (PreparedStatement sourceStatement = sourceConnection.prepareStatement(fetchSourceSQL);
          PreparedStatement targetStatement = targetConnection.prepareStatement(upsertTargetSQL);
-         PreparedStatement insertSyncStatusStatement = targetConnection.prepareStatement(insertSyncStatusSQL);
-         PreparedStatement updateSyncStatusStatement = targetConnection.prepareStatement(updateSyncStatusSQL)) {
+         PreparedStatement updateSyncStatusStatement = sourceConnection.prepareStatement(updateSyncStatusSQL)) {
 
         sourceStatement.setInt(1, THREAD_POOL_SIZE);
         sourceStatement.setInt(2, chunkId);
@@ -34,18 +31,10 @@ private static void processChunk(Connection sourceConnection, Connection targetC
         while (resultSet.next()) {
             int id = resultSet.getInt("id");
             String dataColumn = resultSet.getString("data_column");
-            Timestamp lastModified = resultSet.getTimestamp("last_modified");
 
-            // Insert the record into the sync status table if it doesn't exist
-            insertSyncStatusStatement.setInt(1, id);
-            insertSyncStatusStatement.setTimestamp(2, lastModified);
-            insertSyncStatusStatement.executeUpdate();
-
-            // Set sync status to 'IN_PROGRESS' in the sync status table
+            // Set sync status to 'IN_PROGRESS'
             updateSyncStatusStatement.setString(1, "IN_PROGRESS");
-            updateSyncStatusStatement.setInt(2, 0); // Retry count starts at 0
-            updateSyncStatusStatement.setTimestamp(3, null); // No last_synced timestamp yet
-            updateSyncStatusStatement.setInt(4, id);
+            updateSyncStatusStatement.setInt(2, id);
             updateSyncStatusStatement.executeUpdate();
 
             targetStatement.setInt(1, id);
@@ -74,8 +63,6 @@ private static void executeBatchWithRetries(PreparedStatement targetStatement, C
             
             // If batch is successful, mark records as 'SYNCED'
             updateSyncStatusStatement.setString(1, "SYNCED");
-            updateSyncStatusStatement.setInt(2, retryCount);
-            updateSyncStatusStatement.setTimestamp(3, new Timestamp(System.currentTimeMillis()));
             updateSyncStatusStatement.executeBatch();
             
             success = true;
@@ -85,11 +72,6 @@ private static void executeBatchWithRetries(PreparedStatement targetStatement, C
             retryCount++;
             logger.warn("Retrying batch execution: attempt " + retryCount, e);
             if (retryCount >= MAX_RETRIES) {
-                // Mark failed records as 'FAILED'
-                updateSyncStatusStatement.setString(1, "FAILED");
-                updateSyncStatusStatement.setInt(2, retryCount);
-                updateSyncStatusStatement.setTimestamp(3, null);
-                updateSyncStatusStatement.executeBatch();
                 throw e;
             }
             try {
