@@ -1,85 +1,194 @@
-CREATE TABLE sync_status_table (
-    id            NUMBER PRIMARY KEY,
-    last_modified TIMESTAMP,
-    sync_status   VARCHAR2(20),
-    retry_count   NUMBER DEFAULT 0,
-    last_synced   TIMESTAMP
-);
-private static void processChunk(Connection sourceConnection, Connection targetConnection, int chunkId) throws SQLException {
-    String fetchSourceSQL = "SELECT id, data_column, sync_status FROM source_table WHERE MOD(id, ?) = ? AND last_modified > ? AND sync_status = 'PENDING'";
-    String updateSyncStatusSQL = "UPDATE source_table SET sync_status = ? WHERE id = ?";
-    String upsertTargetSQL = "MERGE INTO target_table t USING (SELECT ? AS id, ? AS data_column FROM dual) s " +
-                             "ON (t.id = s.id) " +
-                             "WHEN MATCHED THEN UPDATE SET t.data_column = s.data_column " +
-                             "WHEN NOT MATCHED THEN INSERT (id, data_column) VALUES (s.id, s.data_column)";
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
-    long lastSyncTimestamp = getLastSyncTimestamp(targetConnection);
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
+import java.io.InputStream;
+import java.sql.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-    try (PreparedStatement sourceStatement = sourceConnection.prepareStatement(fetchSourceSQL);
-         PreparedStatement targetStatement = targetConnection.prepareStatement(upsertTargetSQL);
-         PreparedStatement updateSyncStatusStatement = sourceConnection.prepareStatement(updateSyncStatusSQL)) {
+@Service
+public class OracleDatabaseSyncService {
 
-        sourceStatement.setInt(1, THREAD_POOL_SIZE);
-        sourceStatement.setInt(2, chunkId);
-        sourceStatement.setTimestamp(3, new java.sql.Timestamp(lastSyncTimestamp));
-        sourceStatement.setFetchSize(BATCH_SIZE);
+    private static final Logger logger = LoggerFactory.getLogger(OracleDatabaseSyncService.class);
 
-        ResultSet resultSet = sourceStatement.executeQuery();
-        targetConnection.setAutoCommit(false);
+    private static final String SOURCE_DB_URL = "jdbc:oracle:thin:@//source_db_host:1521/source_service";
+    private static final String SOURCE_DB_USER = "source_user";
+    private static final String SOURCE_DB_PASSWORD = "source_password";
 
-        int count = 0;
-        while (resultSet.next()) {
-            int id = resultSet.getInt("id");
-            String dataColumn = resultSet.getString("data_column");
+    private static final String TARGET_DB_URL = "jdbc:oracle:thin:@//target_db_host:1521/target_service";
+    private static final String TARGET_DB_USER = "target_user";
+    private static final String TARGET_DB_PASSWORD = "target_password";
 
-            // Set sync status to 'IN_PROGRESS'
-            updateSyncStatusStatement.setString(1, "IN_PROGRESS");
-            updateSyncStatusStatement.setInt(2, id);
-            updateSyncStatusStatement.executeUpdate();
+    private static final int BATCH_SIZE = 1000;
+    private static final int THREAD_POOL_SIZE = 10;
+    private static final int MAX_RETRIES = 5;
+    private static final long RETRY_DELAY_MS = 1000;
 
-            targetStatement.setInt(1, id);
-            targetStatement.setString(2, dataColumn);
-            targetStatement.addBatch();
+    private static final int RECORD_LIMIT = 5000;
+    private static final int DAYS_OLDER_THAN = 15;
 
-            count++;
-            if (count % BATCH_SIZE == 0) {
-                executeBatchWithRetries(targetStatement, targetConnection, updateSyncStatusStatement);
-            }
-        }
-        executeBatchWithRetries(targetStatement, targetConnection, updateSyncStatusStatement);
-        resultSet.close();
+    private ExecutorService executorService;
+    private boolean isRunning = false;
 
-        updateLastSyncTimestamp(targetConnection, System.currentTimeMillis());
+    private HikariDataSource sourceDataSource;
+    private HikariDataSource targetDataSource;
+
+    @PostConstruct
+    public void init() {
+        this.sourceDataSource = createDataSource(SOURCE_DB_URL, SOURCE_DB_USER, SOURCE_DB_PASSWORD);
+        this.targetDataSource = createDataSource(TARGET_DB_URL, TARGET_DB_USER, TARGET_DB_PASSWORD);
+        this.executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
     }
-}
 
-private static void executeBatchWithRetries(PreparedStatement targetStatement, Connection targetConnection, PreparedStatement updateSyncStatusStatement) throws SQLException {
-    int retryCount = 0;
-    boolean success = false;
-    while (retryCount < MAX_RETRIES && !success) {
-        try {
+    @PreDestroy
+    public void shutdown() {
+        if (executorService != null) {
+            executorService.shutdownNow();
+        }
+        if (sourceDataSource != null) {
+            sourceDataSource.close();
+        }
+        if (targetDataSource != null) {
+            targetDataSource.close();
+        }
+    }
+
+    public synchronized void startSync() {
+        if (isRunning) {
+            logger.info("Sync is already running");
+            return;
+        }
+        isRunning = true;
+
+        try (Connection sourceConnection = sourceDataSource.getConnection();
+             Connection targetConnection = targetDataSource.getConnection()) {
+
+            for (int i = 0; i < THREAD_POOL_SIZE; i++) {
+                final int chunkId = i;
+                executorService.submit(() -> {
+                    try {
+                        processChunk(sourceConnection, targetConnection, chunkId);
+                    } catch (SQLException e) {
+                        logger.error("Error processing chunk " + chunkId, e);
+                    }
+                });
+            }
+            executorService.shutdown();
+            executorService.awaitTermination(1, TimeUnit.HOURS);
+
+        } catch (Exception e) {
+            logger.error("Database connection error", e);
+        } finally {
+            isRunning = false;
+        }
+    }
+
+    public synchronized void stopSync() {
+        if (isRunning && !executorService.isShutdown()) {
+            logger.info("Stopping sync process...");
+            executorService.shutdownNow();
+            isRunning = false;
+        } else {
+            logger.info("Sync is not running");
+        }
+    }
+
+    private HikariDataSource createDataSource(String dbUrl, String dbUser, String dbPassword) {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(dbUrl);
+        config.setUsername(dbUser);
+        config.setPassword(dbPassword);
+        config.setMaximumPoolSize(THREAD_POOL_SIZE);
+        config.setMinimumIdle(THREAD_POOL_SIZE);
+        config.setConnectionTimeout(30000);
+        config.setIdleTimeout(600000);
+        config.setMaxLifetime(1800000);
+
+        return new HikariDataSource(config);
+    }
+
+    private void processChunk(Connection sourceConnection, Connection targetConnection, int chunkId) throws SQLException {
+        String fetchSourceSQL = "SELECT id, data_column, blob_column FROM source_table WHERE MOD(id, ?) = ? AND last_modified < SYSDATE - ? FETCH FIRST ? ROWS ONLY";
+        String upsertTargetSQL = "MERGE INTO target_table t USING (SELECT ? AS id, ? AS data_column, ? AS blob_column FROM dual) s " +
+                                 "ON (t.id = s.id) " +
+                                 "WHEN MATCHED THEN UPDATE SET t.data_column = s.data_column, t.blob_column = s.blob_column " +
+                                 "WHEN NOT MATCHED THEN INSERT (id, data_column, blob_column) VALUES (s.id, s.data_column, s.blob_column)";
+
+        try (PreparedStatement sourceStatement = sourceConnection.prepareStatement(fetchSourceSQL);
+             PreparedStatement targetStatement = targetConnection.prepareStatement(upsertTargetSQL)) {
+
+            sourceStatement.setInt(1, THREAD_POOL_SIZE);
+            sourceStatement.setInt(2, chunkId);
+            sourceStatement.setInt(3, DAYS_OLDER_THAN);
+            sourceStatement.setInt(4, RECORD_LIMIT);
+            sourceStatement.setFetchSize(BATCH_SIZE);
+
+            ResultSet resultSet = sourceStatement.executeQuery();
+            targetConnection.setAutoCommit(false);
+
+            int count = 0;
+            while (resultSet.next()) {
+                int id = resultSet.getInt("id");
+                String dataColumn = resultSet.getString("data_column");
+                InputStream blobStream = resultSet.getBinaryStream("blob_column");
+
+                targetStatement.setInt(1, id);
+                targetStatement.setString(2, dataColumn);
+                
+                if (blobStream != null) {
+                    targetStatement.setBinaryStream(3, blobStream);
+                } else {
+                    targetStatement.setNull(3, Types.BLOB);
+                }
+                targetStatement.addBatch();
+
+                count++;
+                if (count % BATCH_SIZE == 0) {
+                    targetStatement.executeBatch();
+                    targetConnection.commit();
+                }
+            }
             targetStatement.executeBatch();
             targetConnection.commit();
-            
-            // If batch is successful, mark records as 'SYNCED'
-            updateSyncStatusStatement.setString(1, "SYNCED");
-            updateSyncStatusStatement.executeBatch();
-            
-            success = true;
-            logger.info("Batch executed successfully");
-        } catch (SQLException e) {
-            targetConnection.rollback();
-            retryCount++;
-            logger.warn("Retrying batch execution: attempt " + retryCount, e);
-            if (retryCount >= MAX_RETRIES) {
-                throw e;
-            }
-            try {
-                Thread.sleep(RETRY_DELAY_MS);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
+            resultSet.close();
         }
     }
 }
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+@SpringBootApplication
+public class OracleDatabaseSyncApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(OracleDatabaseSyncApplication.class, args);
+    }
+}
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/sync")
+public class SyncController {
+
+    @Autowired
+    private OracleDatabaseSyncService syncService;
+
+    @PostMapping("/start")
+    public String startSync() {
+        syncService.startSync();
+        return "Sync process started";
+    }
+
+    @PostMapping("/stop")
+    public String stopSync() {
+        syncService.stopSync();
+        return "Sync process stopped";
+    }
+}
