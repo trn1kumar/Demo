@@ -1,2 +1,99 @@
-asdada
-asdasa
+
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.parquet.arrow.ArrowWriter;
+import org.apache.parquet.hadoop.ParquetFileWriter;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.hadoop.fs.Path;
+
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.UUID;
+
+public class ParquetChunkWriter {
+    private static final int MAX_RECORDS_PER_FILE = 10000;
+
+    public static void main(String[] args) throws Exception {
+        // Example data (list of maps)
+        List<Map<String, String>> data = getData(); // Replace with your actual data source
+
+        if (data.isEmpty()) {
+            System.out.println("No data to process.");
+            return;
+        }
+
+        // Create schema from data keys
+        List<Field> fields = data.get(0).keySet().stream()
+                .map(key -> new Field(key, ArrowType.Utf8.INSTANCE, null))
+                .collect(Collectors.toList());
+        Schema schema = new Schema(fields);
+
+        int parquetCounter = 0;
+        for (int i = 0; i < data.size(); i += MAX_RECORDS_PER_FILE) {
+            List<Map<String, String>> chunk = data.subList(i, Math.min(i + MAX_RECORDS_PER_FILE, data.size()));
+
+            System.out.println("Chunk length: " + chunk.size());
+            if (chunk.isEmpty()) {
+                System.out.println("Empty chunk");
+                continue;
+            }
+
+            try (RootAllocator allocator = new RootAllocator()) {
+                try (VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator)) {
+                    root.allocateNew();
+                    
+                    // Fill data into Arrow Vectors
+                    for (Field field : schema.getFields()) {
+                        String fieldName = field.getName();
+                        int index = root.getSchema().findField(fieldName).getIndex();
+                        
+                        List<String> columnData = chunk.stream()
+                                .map(row -> row.getOrDefault(fieldName, null))
+                                .collect(Collectors.toList());
+                        
+                        root.getVector(fieldName).setInitialCapacity(chunk.size());
+                        for (int j = 0; j < columnData.size(); j++) {
+                            root.getVector(fieldName).setSafe(j, columnData.get(j));
+                        }
+                    }
+                    root.setRowCount(chunk.size());
+
+                    // Write to Parquet file
+                    String fileUuid = UUID.randomUUID().toString();
+                    String localParquetPath = String.format("%d_%s.parquet", parquetCounter, fileUuid);
+                    parquetCounter++;
+
+                    try (ParquetWriter<VectorSchemaRoot> writer = ArrowWriter.create(
+                            new Path(localParquetPath),
+                            schema,
+                            ParquetFileWriter.Mode.OVERWRITE,
+                            allocator)) {
+                        writer.write(root);
+                    }
+
+                    System.out.println("Written Parquet file: " + localParquetPath);
+                }
+            }
+        }
+    }
+
+    private static List<Map<String, String>> getData() {
+        // Replace this with your actual data fetching logic
+        List<Map<String, String>> data = new ArrayList<>();
+        Map<String, String> row1 = new HashMap<>();
+        row1.put("col1", "value1");
+        row1.put("col2", "value2");
+        data.add(row1);
+
+        Map<String, String> row2 = new HashMap<>();
+        row2.put("col1", "value3");
+        row2.put("col2", "value4");
+        data.add(row2);
+
+        return data;
+    }
+}
