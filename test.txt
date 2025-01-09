@@ -1,24 +1,76 @@
-Issue Resolution Beyond Defined API Tasks
+import com.google.cloud.storage.BlobId;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.MessageTypeParser;
 
-Identified and resolved a complex issue affecting TDS performance and slowness in June 2024. This was beyond the expected API responsibilities, showing proactive problem-solving skills and an understanding of broader system impacts.
-Hub Cover Match Filter Issue Resolution
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 
-Diagnosed and addressed a major issue within HUB cover match where the filter was not applied for HUB CM in June 2024, improving data accuracy and the overall user experience.
-Efficient IIB Replacement
+public class ParquetWriteToGCS {
+    public static void main(String[] args) throws IOException {
+        // Define schema
+        String schemaStr = "message example { " +
+                "required binary name (UTF8); " +
+                "required int32 age; " +
+                "optional binary city (UTF8); " +
+                "}";
+        MessageType schema = MessageTypeParser.parseMessageType(schemaStr);
+        SimpleGroupFactory groupFactory = new SimpleGroupFactory(schema);
 
-Successfully completed the IIB replacement without the need for additional resources, demonstrating efficiency and dedication by putting in extra effort to deliver results within budget constraints.
-Cost-Effective Migration from Mule to Kong
+        // Write to a local temporary file
+        Configuration conf = new Configuration();
+        Path tempParquetPath = new Path("temp_example.parquet");
 
-Led the migration from Mule to Kong with zero funding, maintaining service stability and preventing disruption. This accomplishment reflects both technical expertise and a focus on cost-effectiveness.
-Internal API Improvement: Masking PI Data
+        try (ParquetWriter<Group> writer = ExampleParquetWriter.builder(tempParquetPath)
+                .withConf(conf)
+                .withType(schema)
+                .build()) {
 
-Implemented an internal improvement to enhance data security by masking Personal Identifiable Information (PII) within APIs, reinforcing compliance and data privacy best practices.
-WAS to IKP Migration
+            // Example data rows
+            Group row1 = groupFactory.newGroup()
+                    .append("name", "Alice")
+                    .append("age", 30)
+                    .append("city", "New York");
 
-Successfully completed the migration from WAS to IKP, ensuring a smooth transition and enhanced platform efficiency.
-Seamless MQ Role Swap
+            Group row2 = groupFactory.newGroup()
+                    .append("name", "Bob")
+                    .append("age", 25)
+                    .append("city", "Los Angeles");
 
-Managed a seamless MQ role swap, ensuring continuity of operations and stability within the system.
-Each of these contributions demonstrates not only my technical skill set but also a commitment to efficiency, cost-savings, and high-quality outcomes for the organization.
+            // Write rows
+            writer.write(row1);
+            writer.write(row2);
 
-This format clearly presents each accomplishment, along with the impac
+            System.out.println("Temporary Parquet file written: " + tempParquetPath);
+        }
+
+        // Upload to GCS
+        String bucketName = "your-bucket-name";
+        String objectName = "example.parquet";
+
+        Storage storage = StorageOptions.getDefaultInstance().getService();
+        BlobId blobId = BlobId.of(bucketName, objectName);
+        BlobInfo blobInfo = BlobInfo.newBuilder(blobId).build();
+
+        try (FileSystem fs = FileSystem.get(conf);
+             FSDataOutputStream tempFileOutputStream = fs.create(tempParquetPath);
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+
+            fs.copyToLocalFile(tempParquetPath, new Path("local_example.parquet"));
+            storage.create(blobInfo, outputStream.toByteArray());
+
+            System.out.println("File uploaded to GCS: gs://" + bucketName + "/" + objectName);
+        }
+    }
+}
+
