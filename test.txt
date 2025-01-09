@@ -1,20 +1,60 @@
-<dependencies>
-    <!-- Google Cloud Storage -->
-    <dependency>
-        <groupId>com.google.cloud</groupId>
-        <artifactId>google-cloud-storage</artifactId>
-        <version>2.27.1</version>
-    </dependency>
+import com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.MessageTypeParser;
 
-    <!-- Apache Parquet -->
-    <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-hadoop</artifactId>
-        <version>1.13.0</version>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.hadoop</groupId>
-        <artifactId>hadoop-common</artifactId>
-        <version>3.3.4</version>
-    </dependency>
-</dependencies>
+public class ParquetWriteToGCS {
+    public static void main(String[] args) {
+        // GCS Bucket and File Path
+        String bucketName = "your-bucket-name";
+        String parquetFilePath = "gs://" + bucketName + "/example.parquet";
+
+        // Define Schema
+        String schemaStr = "message example { " +
+                "required binary name (UTF8); " +
+                "required int32 age; " +
+                "optional binary city (UTF8); " +
+                "}";
+        MessageType schema = MessageTypeParser.parseMessageType(schemaStr);
+        SimpleGroupFactory groupFactory = new SimpleGroupFactory(schema);
+
+        // Configure GCS
+        Configuration conf = new Configuration();
+        conf.set("fs.defaultFS", "gs://");
+        conf.set("fs.gs.impl", GoogleHadoopFileSystem.class.getName());
+        conf.set("google.cloud.auth.service.account.enable", "true");
+        conf.set("google.cloud.auth.service.account.json.keyfile", "/path/to/your-service-account-key.json");
+
+        // Write Parquet File to GCS
+        try (ParquetWriter<Group> writer = ExampleParquetWriter.builder(new Path(parquetFilePath))
+                .withConf(conf)
+                .withType(schema)
+                .build()) {
+
+            // Example data rows
+            Group row1 = groupFactory.newGroup()
+                    .append("name", "Alice")
+                    .append("age", 30)
+                    .append("city", "New York");
+
+            Group row2 = groupFactory.newGroup()
+                    .append("name", "Bob")
+                    .append("age", 25)
+                    .append("city", "Los Angeles");
+
+            // Write rows to Parquet
+            writer.write(row1);
+            writer.write(row2);
+
+            System.out.println("Parquet file written to: " + parquetFilePath);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
