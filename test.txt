@@ -1,3 +1,54 @@
+import com.google.cloud.storage.Blob;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.hadoop.example.GroupReadSupport;
+
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+public class ParquetReadFromGCS {
+    public static void main(String[] args) throws IOException {
+        // GCS File Info
+        String bucketName = "your-bucket-name";
+        String objectName = "example.parquet";
+
+        // Download the file locally
+        Storage storage = StorageOptions.getDefaultInstance().getService();
+        Blob blob = storage.get(bucketName, objectName);
+
+        if (blob == null) {
+            System.out.println("No such file in GCS: gs://" + bucketName + "/" + objectName);
+            return;
+        }
+
+        String localParquetPath = "downloaded_example.parquet";
+        try (FileOutputStream outputStream = new FileOutputStream(localParquetPath)) {
+            outputStream.write(blob.getContent());
+        }
+        System.out.println("File downloaded from GCS to: " + localParquetPath);
+
+        // Read the Parquet file
+        Configuration conf = new Configuration();
+        Path parquetPath = new Path(localParquetPath);
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), parquetPath)
+                .withConf(conf)
+                .build()) {
+
+            Group group;
+            while ((group = reader.read()) != null) {
+                // Print data row
+                System.out.println(group.toString());
+            }
+        }
+    }
+}
 
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
