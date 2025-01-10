@@ -1,3 +1,4 @@
+import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
@@ -5,110 +6,56 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.parquet.avro.AvroParquetWriter;
-import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.channels.Channels;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 
 public class ParquetToGCS {
 
     public static void main(String[] args) throws Exception {
-        // Define the schema
-        String avroSchema = """
-                {
-                  "type": "record",
-                  "name": "User",
-                  "fields": [
-                    {"name": "id", "type": "int"},
+        // Define schema
+        String schemaString = """
+            {
+                "type": "record",
+                "name": "User",
+                "fields": [
                     {"name": "name", "type": "string"},
                     {"name": "age", "type": "int"}
-                  ]
-                }
-                """;
-        Schema schema = new Schema.Parser().parse(avroSchema);
+                ]
+            }
+        """;
+        Schema schema = new Schema.Parser().parse(schemaString);
 
-        // Write Parquet file locally
-        File tempFile = File.createTempFile("output", ".parquet");
-        try (ParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(new org.apache.hadoop.fs.Path(tempFile.getAbsolutePath()))
+        // Create a generic record
+        GenericRecord record1 = new GenericData.Record(schema);
+        record1.put("name", "Alice");
+        record1.put("age", 30);
+
+        GenericRecord record2 = new GenericData.Record(schema);
+        record2.put("name", "Bob");
+        record2.put("age", 25);
+
+        // Write to ByteArrayOutputStream
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        try (AvroParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(
+                new org.apache.parquet.io.OutputStreamOutputFile(outputStream))
                 .withSchema(schema)
                 .withCompressionCodec(CompressionCodecName.SNAPPY)
                 .build()) {
-
-            // Create data records
-            GenericRecord user1 = new GenericData.Record(schema);
-            user1.put("id", 1);
-            user1.put("name", "Alice");
-            user1.put("age", 25);
-
-            GenericRecord user2 = new GenericData.Record(schema);
-            user2.put("id", 2);
-            user2.put("name", "Bob");
-            user2.put("age", 30);
-
-            writer.write(user1);
-            writer.write(user2);
+            writer.write(record1);
+            writer.write(record2);
         }
 
-        // Upload Parquet file to Google Cloud Storage
-        String bucketName = "your-bucket-name";
-        String objectName = "output.parquet";
-        uploadToGCS(bucketName, objectName, tempFile.getAbsolutePath());
-
-        System.out.println("File uploaded to GCS: gs://" + bucketName + "/" + objectName);
-    }
-
-    private static void uploadToGCS(String bucketName, String objectName, String filePath) throws Exception {
+        // Upload to GCS
         Storage storage = StorageOptions.getDefaultInstance().getService();
-        try (FileInputStream fis = new FileInputStream(filePath)) {
-            storage.create(
-                    BlobInfo.newBuilder(bucketName, objectName).build(),
-                    Channels.newChannel(fis)
-            );
+        BlobId blobId = BlobId.of("your-bucket-name", "path/to/file.parquet");
+        BlobInfo blobInfo = BlobInfo.newBuilder(blobId).build();
+        try (var channel = storage.writer(blobInfo)) {
+            channel.write(ByteBuffer.wrap(outputStream.toByteArray()));
         }
-    }
-}
 
-import com.google.cloud.storage.Blob;
-import com.google.cloud.storage.Storage;
-import com.google.cloud.storage.StorageOptions;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.parquet.avro.AvroParquetReader;
-import org.apache.parquet.hadoop.ParquetReader;
-import org.apache.avro.generic.GenericRecord;
-
-import java.io.File;
-
-public class ReadParquetFromGCS {
-
-    public static void main(String[] args) throws Exception {
-        // Download Parquet file from GCS
-        String bucketName = "your-bucket-name";
-        String objectName = "output.parquet";
-        File localFile = downloadFromGCS(bucketName, objectName);
-
-        // Read Parquet file
-        try (ParquetReader<GenericRecord> reader = AvroParquetReader.<GenericRecord>builder(new Path(localFile.getAbsolutePath())).build()) {
-            GenericRecord record;
-            while ((record = reader.read()) != null) {
-                System.out.println(record);
-            }
-        }
-    }
-
-    private static File downloadFromGCS(String bucketName, String objectName) throws Exception {
-        Storage storage = StorageOptions.getDefaultInstance().getService();
-        Blob blob = storage.get(bucketName, objectName);
-        File tempFile = File.createTempFile("downloaded", ".parquet");
-        try (FileOutputStream fos = new FileOutputStream(tempFile)) {
-            fos.getChannel().transferFrom(Channels.newChannel(blob.reader()), 0, Long.MAX_VALUE);
-        }
-        return tempFile;
+        System.out.println("Parquet file uploaded to GCS!");
     }
 }
 <dependencies>
@@ -118,12 +65,14 @@ public class ReadParquetFromGCS {
         <artifactId>parquet-avro</artifactId>
         <version>1.13.0</version>
     </dependency>
-    <!-- Google Cloud Storage SDK -->
+
+    <!-- Google Cloud Storage -->
     <dependency>
         <groupId>com.google.cloud</groupId>
         <artifactId>google-cloud-storage</artifactId>
-        <version>2.27.0</version>
+        <version>2.26.0</version>
     </dependency>
+
     <!-- Avro for schema -->
     <dependency>
         <groupId>org.apache.avro</groupId>
