@@ -6,12 +6,63 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.parquet.avro.AvroParquetWriter;
-import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.hadoop.ParquetFileWriter;
+import org.apache.parquet.io.OutputFile;
+import org.apache.parquet.io.PositionOutputStream;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.channels.Channels;
 
 public class ParquetToGCS {
+
+    // Custom OutputFile implementation
+    static class ByteArrayOutputFile implements OutputFile {
+        private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+        @Override
+        public PositionOutputStream create(long blockSizeHint) {
+            return new PositionOutputStream() {
+                private long position = 0;
+
+                @Override
+                public long getPos() {
+                    return position;
+                }
+
+                @Override
+                public void write(int b) {
+                    outputStream.write(b);
+                    position++;
+                }
+
+                @Override
+                public void write(byte[] b, int off, int len) {
+                    outputStream.write(b, off, len);
+                    position += len;
+                }
+            };
+        }
+
+        @Override
+        public PositionOutputStream createOrOverwrite(long blockSizeHint) {
+            return create(blockSizeHint);
+        }
+
+        @Override
+        public boolean supportsBlockSize() {
+            return false;
+        }
+
+        @Override
+        public long defaultBlockSize() {
+            return 0;
+        }
+
+        public byte[] toByteArray() {
+            return outputStream.toByteArray();
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         // Define schema
@@ -36,12 +87,12 @@ public class ParquetToGCS {
         record2.put("name", "Bob");
         record2.put("age", 25);
 
-        // Write to ByteArrayOutputStream
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        try (AvroParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(
-                new org.apache.parquet.io.OutputStreamOutputFile(outputStream))
+        // Use custom OutputFile to write data
+        ByteArrayOutputFile outputFile = new ByteArrayOutputFile();
+        try (AvroParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(outputFile)
                 .withSchema(schema)
-                .withCompressionCodec(CompressionCodecName.SNAPPY)
+                .withCompressionCodec(org.apache.parquet.hadoop.metadata.CompressionCodecName.SNAPPY)
+                .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)
                 .build()) {
             writer.write(record1);
             writer.write(record2);
@@ -52,31 +103,9 @@ public class ParquetToGCS {
         BlobId blobId = BlobId.of("your-bucket-name", "path/to/file.parquet");
         BlobInfo blobInfo = BlobInfo.newBuilder(blobId).build();
         try (var channel = storage.writer(blobInfo)) {
-            channel.write(ByteBuffer.wrap(outputStream.toByteArray()));
+            channel.write(ByteBuffer.wrap(outputFile.toByteArray()));
         }
 
         System.out.println("Parquet file uploaded to GCS!");
     }
 }
-<dependencies>
-    <!-- Apache Parquet -->
-    <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-avro</artifactId>
-        <version>1.13.0</version>
-    </dependency>
-
-    <!-- Google Cloud Storage -->
-    <dependency>
-        <groupId>com.google.cloud</groupId>
-        <artifactId>google-cloud-storage</artifactId>
-        <version>2.26.0</version>
-    </dependency>
-
-    <!-- Avro for schema -->
-    <dependency>
-        <groupId>org.apache.avro</groupId>
-        <artifactId>avro</artifactId>
-        <version>1.11.1</version>
-    </dependency>
-</dependencies>
