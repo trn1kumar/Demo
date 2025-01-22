@@ -1,111 +1,96 @@
-import com.google.cloud.storage.BlobId;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
-import com.google.cloud.storage.StorageOptions;
-import org.apache.avro.Schema;
-import org.apache.avro.generic.GenericData;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.parquet.avro.AvroParquetWriter;
-import org.apache.parquet.hadoop.ParquetFileWriter;
-import org.apache.parquet.io.OutputFile;
-import org.apache.parquet.io.PositionOutputStream;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.hadoop.example.GroupReadSupport;
+import org.apache.parquet.example.data.Group;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.channels.Channels;
-
-public class ParquetToGCS {
-
-    // Custom OutputFile implementation
-    static class ByteArrayOutputFile implements OutputFile {
-        private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-
-        @Override
-        public PositionOutputStream create(long blockSizeHint) {
-            return new PositionOutputStream() {
-                private long position = 0;
-
-                @Override
-                public long getPos() {
-                    return position;
-                }
-
-                @Override
-                public void write(int b) {
-                    outputStream.write(b);
-                    position++;
-                }
-
-                @Override
-                public void write(byte[] b, int off, int len) {
-                    outputStream.write(b, off, len);
-                    position += len;
-                }
-            };
-        }
-
-        @Override
-        public PositionOutputStream createOrOverwrite(long blockSizeHint) {
-            return create(blockSizeHint);
-        }
-
-        @Override
-        public boolean supportsBlockSize() {
-            return false;
-        }
-
-        @Override
-        public long defaultBlockSize() {
-            return 0;
-        }
-
-        public byte[] toByteArray() {
-            return outputStream.toByteArray();
-        }
-    }
-
+public class ReadParquetFromGCS {
     public static void main(String[] args) throws Exception {
-        // Define schema
-        String schemaString = """
-            {
-                "type": "record",
-                "name": "User",
-                "fields": [
-                    {"name": "name", "type": "string"},
-                    {"name": "age", "type": "int"}
-                ]
-            }
-        """;
-        Schema schema = new Schema.Parser().parse(schemaString);
+        String gcsFilePath = "gs://your-bucket-name/path/to/file.parquet";
 
-        // Create a generic record
-        GenericRecord record1 = new GenericData.Record(schema);
-        record1.put("name", "Alice");
-        record1.put("age", 30);
+        // Configure Hadoop for Google Cloud Storage
+        Configuration conf = new Configuration();
+        conf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem");
+        conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
 
-        GenericRecord record2 = new GenericData.Record(schema);
-        record2.put("name", "Bob");
-        record2.put("age", 25);
+        ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), new Path(gcsFilePath))
+                .withConf(conf)
+                .build();
 
-        // Use custom OutputFile to write data
-        ByteArrayOutputFile outputFile = new ByteArrayOutputFile();
-        try (AvroParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(outputFile)
-                .withSchema(schema)
-                .withCompressionCodec(org.apache.parquet.hadoop.metadata.CompressionCodecName.SNAPPY)
-                .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)
-                .build()) {
-            writer.write(record1);
-            writer.write(record2);
+        Group group;
+        while ((group = reader.read()) != null) {
+            System.out.println(group.toString());
         }
-
-        // Upload to GCS
-        Storage storage = StorageOptions.getDefaultInstance().getService();
-        BlobId blobId = BlobId.of("your-bucket-name", "path/to/file.parquet");
-        BlobInfo blobInfo = BlobInfo.newBuilder(blobId).build();
-        try (var channel = storage.writer(blobInfo)) {
-            channel.write(ByteBuffer.wrap(outputFile.toByteArray()));
-        }
-
-        System.out.println("Parquet file uploaded to GCS!");
+        reader.close();
     }
 }
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.GroupWriteSupport;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.Types;
+
+public class WriteParquetToGCS {
+    public static void main(String[] args) throws Exception {
+        String gcsFilePath = "gs://your-bucket-name/path/to/output.parquet";
+
+        // Define Parquet Schema
+        MessageType schema = Types.buildMessage()
+                .required(org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT32).named("id")
+                .required(org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BINARY).named("name")
+                .named("ExampleSchema");
+
+        Configuration conf = new Configuration();
+        conf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem");
+        conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
+
+        GroupWriteSupport.setSchema(schema, conf);
+
+        try (ParquetWriter<Group> writer = new ParquetWriter<>(
+                new Path(gcsFilePath),
+                new GroupWriteSupport(),
+                ParquetWriter.DEFAULT_COMPRESSION_CODEC_NAME,
+                ParquetWriter.DEFAULT_BLOCK_SIZE,
+                ParquetWriter.DEFAULT_PAGE_SIZE,
+                ParquetWriter.DEFAULT_DICTIONARY_PAGE_SIZE,
+                ParquetWriter.DEFAULT_IS_DICTIONARY_ENABLED,
+                ParquetWriter.DEFAULT_IS_VALIDATING_ENABLED,
+                conf)) {
+
+            SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+
+            Group group = factory.newGroup()
+                    .append("id", 1)
+                    .append("name", "Alice");
+
+            writer.write(group);
+        }
+        System.out.println("Parquet file written to: " + gcsFilePath);
+    }
+}
+<dependencies>
+    <!-- Apache Parquet -->
+    <dependency>
+        <groupId>org.apache.parquet</groupId>
+        <artifactId>parquet-avro</artifactId>
+        <version>1.13.1</version>
+    </dependency>
+
+    <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-client</artifactId>
+        <version>3.3.2</version>
+    </dependency>
+
+    <!-- Google Cloud Storage -->
+    <dependency>
+        <groupId>com.google.cloud</groupId>
+        <artifactId>google-cloud-storage</artifactId>
+        <version>2.8.1</version>
+    </dependency>
+</dependencies>
+
