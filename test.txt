@@ -1,102 +1,129 @@
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.parquet.hadoop.ParquetReader;
-import org.apache.parquet.hadoop.example.GroupReadSupport;
-import org.apache.parquet.example.data.Group;
+rules:
+  - name: "Inter Entity Ordering"
+    description: "Order transactions by Leg Type"
+    condition: "legType in ['BUY', 'SELL', 'HOLD']"
+    actions:
+      - "System.out.println('Ordering by Leg Type')"
 
-public class ReadParquetFromGCS {
-    public static void main(String[] args) throws Exception {
-        String gcsFilePath = "gs://your-bucket-name/path/to/file.parquet";
+  - name: "Inter Ordering"
+    description: "Validate Source Name and Direction"
+    condition: "sourceName in ['EXCHANGE', 'BROKER'] && direction in ['IN', 'OUT']"
+    actions:
+      - "System.out.println('Ordering by Weightage Matrix')"
 
-        // Configure Hadoop for Google Cloud Storage
-        Configuration conf = new Configuration();
-        conf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem");
-        conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
+  - name: "Asset Ordering"
+    description: "Order transactions by Timestamp"
+    condition: "timestamp != null"
+    actions:
+      - "System.out.println('Ordering by Timestamp')"
 
-        ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), new Path(gcsFilePath))
-                .withConf(conf)
-                .build();
 
-        Group group;
-        while ((group = reader.read()) != null) {
-            System.out.println(group.toString());
-        }
-        reader.close();
-    }
+import java.time.LocalDateTime;
+
+public class TransactionRequest {
+    private String entity;
+    private String legType;
+    private String timestamp;
+    private String sourceName;
+    private String direction;
+
+    // Getters and Setters
+    public String getEntity() { return entity; }
+    public void setEntity(String entity) { this.entity = entity; }
+
+    public String getLegType() { return legType; }
+    public void setLegType(String legType) { this.legType = legType; }
+
+    public String getTimestamp() { return timestamp; }
+    public void setTimestamp(String timestamp) { this.timestamp = timestamp; }
+
+    public String getSourceName() { return sourceName; }
+    public void setSourceName(String sourceName) { this.sourceName = sourceName; }
+
+    public String getDirection() { return direction; }
+    public void setDirection(String direction) { this.direction = direction; }
 }
 
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.parquet.example.data.Group;
-import org.apache.parquet.example.data.simple.SimpleGroupFactory;
-import org.apache.parquet.hadoop.ParquetWriter;
-import org.apache.parquet.hadoop.example.GroupWriteSupport;
-import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.Types;
 
-public class WriteParquetToGCS {
+import com.google.cloud.bigtable.hbase.BigtableConfiguration;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.gcp.bigtable.BigtableIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.*;
+import org.apache.beam.sdk.values.PCollection;
+import org.jeasy.rules.api.*;
+import org.jeasy.rules.core.DefaultRulesEngine;
+import java.io.IOException;
+import java.util.Comparator;
+import java.util.List;
+
+public class TransactionRuleEngine {
     public static void main(String[] args) throws Exception {
-        String gcsFilePath = "gs://your-bucket-name/path/to/output.parquet";
+        // Load Rules from YAML
+        Rules rules = RuleLoader.loadRulesFromYAML("rules.yml");
+        RulesEngine rulesEngine = new DefaultRulesEngine();
 
-        // Define Parquet Schema
-        MessageType schema = Types.buildMessage()
-                .required(org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT32).named("id")
-                .required(org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BINARY).named("name")
-                .named("ExampleSchema");
+        // Apache Beam Pipeline
+        Pipeline pipeline = Pipeline.create(PipelineOptionsFactory.create());
 
-        Configuration conf = new Configuration();
-        conf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem");
-        conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
+        PCollection<TransactionRequest> input = pipeline.apply("Read Transactions", /* Read from Kafka/GCS/etc. */);
 
-        GroupWriteSupport.setSchema(schema, conf);
+        // Apply Ordering Logic
+        PCollection<TransactionRequest> orderedTransactions = input
+            .apply("Apply Ordering", ParDo.of(new DoFn<TransactionRequest, TransactionRequest>() {
+                @ProcessElement
+                public void processElement(@Element TransactionRequest request, OutputReceiver<TransactionRequest> out) throws IOException {
+                    Facts facts = new Facts();
+                    facts.put("entity", request.getEntity());
+                    facts.put("legType", request.getLegType());
+                    facts.put("timestamp", request.getTimestamp());
+                    facts.put("sourceName", request.getSourceName());
+                    facts.put("direction", request.getDirection());
 
-        try (ParquetWriter<Group> writer = new ParquetWriter<>(
-                new Path(gcsFilePath),
-                new GroupWriteSupport(),
-                ParquetWriter.DEFAULT_COMPRESSION_CODEC_NAME,
-                ParquetWriter.DEFAULT_BLOCK_SIZE,
-                ParquetWriter.DEFAULT_PAGE_SIZE,
-                ParquetWriter.DEFAULT_DICTIONARY_PAGE_SIZE,
-                ParquetWriter.DEFAULT_IS_DICTIONARY_ENABLED,
-                ParquetWriter.DEFAULT_IS_VALIDATING_ENABLED,
-                conf)) {
+                    // Fetch old transactions from Bigtable
+                    int oldTransactionCount = fetchOldTransactions(request);
+                    facts.put("oldTransactionCount", oldTransactionCount);
 
-            SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+                    // Apply Rules
+                    rulesEngine.fire(rules, facts);
+                    out.output(request);
+                }
+            }));
 
-            Group group = factory.newGroup()
-                    .append("id", 1)
-                    .append("name", "Alice");
+        // Sorting by Levels
+        PCollection<TransactionRequest> sortedTransactions = orderedTransactions
+            .apply("Sort Transactions", MapElements.into(TypeDescriptors.lists(TypeDescriptor.of(TransactionRequest.class)))
+                .via((List<TransactionRequest> transactions) -> {
+                    transactions.sort(Comparator.comparing(TransactionRequest::getLegType)  // Inter Entity
+                            .thenComparing(TransactionRequest::getSourceName)           // Inter Ordering
+                            .thenComparing(TransactionRequest::getTimestamp));          // Asset Ordering
+                    return transactions;
+                }));
 
-            writer.write(group);
+        pipeline.run().waitUntilFinish();
+    }
+
+    private static int fetchOldTransactions(TransactionRequest request) throws IOException {
+        // Initialize Bigtable Connection
+        String projectId = "your-project-id";
+        String instanceId = "your-instance-id";
+        String tableName = "transactions";
+
+        try (com.google.cloud.bigtable.hbase.BigtableConnection connection =
+                     BigtableConfiguration.connect(projectId, instanceId)) {
+            org.apache.hadoop.hbase.client.Table table = connection.getTable(org.apache.hadoop.hbase.TableName.valueOf(tableName));
+
+            // Query for similar transactions
+            org.apache.hadoop.hbase.client.Scan scan = new org.apache.hadoop.hbase.client.Scan();
+            scan.setStartRow(request.getEntity().getBytes());
+            scan.setStopRow(request.getEntity().getBytes());
+
+            org.apache.hadoop.hbase.client.ResultScanner scanner = table.getScanner(scan);
+            int count = 0;
+            for (org.apache.hadoop.hbase.client.Result result : scanner) {
+                count++;
+            }
+            return count;
         }
-        System.out.println("Parquet file written to: " + gcsFilePath);
     }
 }
-<dependencies>
-    <!-- Apache Parquet Dependencies -->
-    <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-avro</artifactId>
-        <version>1.13.1</version>
-    </dependency>
-
-    <dependency>
-        <groupId>org.apache.hadoop</groupId>
-        <artifactId>hadoop-client</artifactId>
-        <version>3.3.2</version>
-    </dependency>
-
-    <!-- Google Cloud Storage Connector -->
-    <dependency>
-        <groupId>com.google.cloud.bigdataoss</groupId>
-        <artifactId>gcs-connector</artifactId>
-        <version>hadoop3-2.2.15</version> <!-- Ensure this version matches your Hadoop version -->
-    </dependency>
-
-    <!-- Google Cloud Storage SDK -->
-    <dependency>
-        <groupId>com.google.cloud</groupId>
-        <artifactId>google-cloud-storage</artifactId>
-        <version>2.8.1</version>
-    </dependency>
-</dependencies>
