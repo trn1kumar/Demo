@@ -1,129 +1,97 @@
-rules:
-  - name: "Inter Entity Ordering"
-    description: "Order transactions by Leg Type"
-    condition: "legType in ['BUY', 'SELL', 'HOLD']"
-    actions:
-      - "System.out.println('Ordering by Leg Type')"
-
-  - name: "Inter Ordering"
-    description: "Validate Source Name and Direction"
-    condition: "sourceName in ['EXCHANGE', 'BROKER'] && direction in ['IN', 'OUT']"
-    actions:
-      - "System.out.println('Ordering by Weightage Matrix')"
-
-  - name: "Asset Ordering"
-    description: "Order transactions by Timestamp"
-    condition: "timestamp != null"
-    actions:
-      - "System.out.println('Ordering by Timestamp')"
-
-
-import java.time.LocalDateTime;
-
-public class TransactionRequest {
-    private String entity;
-    private String legType;
-    private String timestamp;
-    private String sourceName;
-    private String direction;
-
-    // Getters and Setters
-    public String getEntity() { return entity; }
-    public void setEntity(String entity) { this.entity = entity; }
-
-    public String getLegType() { return legType; }
-    public void setLegType(String legType) { this.legType = legType; }
-
-    public String getTimestamp() { return timestamp; }
-    public void setTimestamp(String timestamp) { this.timestamp = timestamp; }
-
-    public String getSourceName() { return sourceName; }
-    public void setSourceName(String sourceName) { this.sourceName = sourceName; }
-
-    public String getDirection() { return direction; }
-    public void setDirection(String direction) { this.direction = direction; }
-}
-
-
-import com.google.cloud.bigtable.hbase.BigtableConfiguration;
-import org.apache.beam.sdk.Pipeline;
-import org.apache.beam.sdk.io.gcp.bigtable.BigtableIO;
-import org.apache.beam.sdk.options.PipelineOptionsFactory;
-import org.apache.beam.sdk.transforms.*;
-import org.apache.beam.sdk.values.PCollection;
-import org.jeasy.rules.api.*;
-import org.jeasy.rules.core.DefaultRulesEngine;
+import com.google.cloud.bigtable.data.v2.BigtableDataClient;
+import com.google.cloud.bigtable.data.v2.models.*;
 import java.io.IOException;
-import java.util.Comparator;
-import java.util.List;
+import java.time.Instant;
+import java.util.*;
 
-public class TransactionRuleEngine {
-    public static void main(String[] args) throws Exception {
-        // Load Rules from YAML
-        Rules rules = RuleLoader.loadRulesFromYAML("rules.yml");
-        RulesEngine rulesEngine = new DefaultRulesEngine();
+class PaymentEvent {
+    private final String entity;
+    private final String bic;
+    private final String legType;
+    private final Instant timestamp;
+    private int sequence;
 
-        // Apache Beam Pipeline
-        Pipeline pipeline = Pipeline.create(PipelineOptionsFactory.create());
-
-        PCollection<TransactionRequest> input = pipeline.apply("Read Transactions", /* Read from Kafka/GCS/etc. */);
-
-        // Apply Ordering Logic
-        PCollection<TransactionRequest> orderedTransactions = input
-            .apply("Apply Ordering", ParDo.of(new DoFn<TransactionRequest, TransactionRequest>() {
-                @ProcessElement
-                public void processElement(@Element TransactionRequest request, OutputReceiver<TransactionRequest> out) throws IOException {
-                    Facts facts = new Facts();
-                    facts.put("entity", request.getEntity());
-                    facts.put("legType", request.getLegType());
-                    facts.put("timestamp", request.getTimestamp());
-                    facts.put("sourceName", request.getSourceName());
-                    facts.put("direction", request.getDirection());
-
-                    // Fetch old transactions from Bigtable
-                    int oldTransactionCount = fetchOldTransactions(request);
-                    facts.put("oldTransactionCount", oldTransactionCount);
-
-                    // Apply Rules
-                    rulesEngine.fire(rules, facts);
-                    out.output(request);
-                }
-            }));
-
-        // Sorting by Levels
-        PCollection<TransactionRequest> sortedTransactions = orderedTransactions
-            .apply("Sort Transactions", MapElements.into(TypeDescriptors.lists(TypeDescriptor.of(TransactionRequest.class)))
-                .via((List<TransactionRequest> transactions) -> {
-                    transactions.sort(Comparator.comparing(TransactionRequest::getLegType)  // Inter Entity
-                            .thenComparing(TransactionRequest::getSourceName)           // Inter Ordering
-                            .thenComparing(TransactionRequest::getTimestamp));          // Asset Ordering
-                    return transactions;
-                }));
-
-        pipeline.run().waitUntilFinish();
+    public PaymentEvent(String entity, String bic, String legType, Instant timestamp) {
+        this.entity = entity;
+        this.bic = bic;
+        this.legType = legType;
+        this.timestamp = timestamp;
     }
 
-    private static int fetchOldTransactions(TransactionRequest request) throws IOException {
-        // Initialize Bigtable Connection
-        String projectId = "your-project-id";
-        String instanceId = "your-instance-id";
-        String tableName = "transactions";
+    public String getEntity() { return entity; }
+    public String getLegType() { return legType; }
+    public Instant getTimestamp() { return timestamp; }
+    public int getSequence() { return sequence; }
+    public void setSequence(int sequence) { this.sequence = sequence; }
 
-        try (com.google.cloud.bigtable.hbase.BigtableConnection connection =
-                     BigtableConfiguration.connect(projectId, instanceId)) {
-            org.apache.hadoop.hbase.client.Table table = connection.getTable(org.apache.hadoop.hbase.TableName.valueOf(tableName));
+    @Override
+    public String toString() {
+        return String.format("Entity: %s, BIC: %s, LegType: %s, Timestamp: %s, Sequence: %d",
+                entity, bic, legType, timestamp, sequence);
+    }
+}
 
-            // Query for similar transactions
-            org.apache.hadoop.hbase.client.Scan scan = new org.apache.hadoop.hbase.client.Scan();
-            scan.setStartRow(request.getEntity().getBytes());
-            scan.setStopRow(request.getEntity().getBytes());
+class BigtableEventSequencer {
+    private static final String PROJECT_ID = "your-project-id";
+    private static final String INSTANCE_ID = "your-instance-id";
+    private static final String TABLE_NAME = "your-table-name";
 
-            org.apache.hadoop.hbase.client.ResultScanner scanner = table.getScanner(scan);
-            int count = 0;
-            for (org.apache.hadoop.hbase.client.Result result : scanner) {
-                count++;
-            }
-            return count;
+    private static final Map<String, Integer> LEG_ORDER = Map.of(
+            "Instructing", 1,
+            "Intermediary", 2,
+            "Beneficiary", 3
+    );
+
+    private final BigtableDataClient dataClient;
+
+    public BigtableEventSequencer() throws IOException {
+        this.dataClient = BigtableDataClient.create(PROJECT_ID, INSTANCE_ID);
+    }
+
+    public void processEvent(PaymentEvent event) {
+        int legPriority = LEG_ORDER.getOrDefault(event.getLegType(), 4);
+        int newSequence = getNextSequence(event.getEntity(), legPriority, event.getTimestamp());
+        
+        event.setSequence(newSequence);
+        storeEvent(event);
+        
+        System.out.println(event);
+    }
+
+    private int getNextSequence(String entity, int legPriority, Instant eventTime) {
+        Query query = Query.create(TABLE_NAME).prefix(entity).limit(1).orderByTimestampDesc();
+        int lastSequence = 1;
+        Instant lastTimestamp = Instant.EPOCH;
+
+        for (Row row : dataClient.readRows(query)) {
+            RowCell cell = row.getCells().get(0);
+            lastTimestamp = Instant.ofEpochMilli(cell.getTimestamp() / 1000);
+            lastSequence = Integer.parseInt(cell.getValue().toStringUtf8());
+            break;
         }
+
+        // Assign sequence dynamically without modifying past events
+        if (eventTime.isBefore(lastTimestamp)) {
+            return lastSequence - 10; // Assign a lower sequence (leaving a gap)
+        } else {
+            return lastSequence + 10; // Assign a higher sequence (leaving a gap)
+        }
+    }
+
+    private void storeEvent(PaymentEvent event) {
+        Mutation mutation = Mutation.create().setCell("event_data", "sequence", event.getSequence());
+        dataClient.mutateRow(RowMutation.create(TABLE_NAME, event.getEntity()).addMutation(mutation));
+    }
+}
+
+public class OptimizedRealTimeSequencer {
+    public static void main(String[] args) throws IOException {
+        BigtableEventSequencer sequencer = new BigtableEventSequencer();
+
+        // Simulating unordered event arrivals
+        sequencer.processEvent(new PaymentEvent("HBUS", "BIC1", "Intermediary", Instant.parse("2025-02-10T10:00:00Z")));
+        sequencer.processEvent(new PaymentEvent("HBUK", "BIC2", "Instructing", Instant.parse("2025-02-10T09:00:00Z")));
+        sequencer.processEvent(new PaymentEvent("HBFR", "BIC3", "Beneficiary", Instant.parse("2025-02-10T11:30:00Z")));
+        sequencer.processEvent(new PaymentEvent("HBLO", "BIC4", "Intermediary", Instant.parse("2025-02-10T09:30:00Z"))); // Earlier event
     }
 }
