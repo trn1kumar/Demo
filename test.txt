@@ -1,103 +1,83 @@
-// Java 17 // Apache Beam + GCS + Spark + Iceberg // Goal: High-speed ingestion from Pub/Sub, deduplication, and safe Iceberg writes
+package com.example;
 
-// --------------------------- // PART 1: Apache Beam Pipeline // ---------------------------
+import com.google.cloud.pubsub.v1.Subscriber;
+import com.google.pubsub.v1.*;
+import com.google.api.core.ApiService.Listener;
+import com.google.api.core.ApiService.State;
+import com.google.api.core.ApiService;
+import com.google.api.gax.rpc.ApiException;
+import com.google.pubsub.v1.PubsubMessage;
+import com.google.cloud.pubsub.v1.AckReplyConsumer;
 
-public class PubSubToGcsParquetPipeline {
+import org.apache.spark.sql.*;
 
-public static void main(String[] args) {
-    PipelineOptions options = PipelineOptionsFactory.fromArgs(args).create();
-    Pipeline pipeline = Pipeline.create(options);
+import java.util.*;
+import java.util.concurrent.*;
 
-    PCollection<YourRecord> parsed = pipeline
-        .apply("ReadFromPubSub", PubsubIO.readStrings().fromSubscription("projects/YOUR_PROJECT/subscriptions/YOUR_SUB"))
-        .apply("ParseJson", MapElements.into(TypeDescriptor.of(YourRecord.class))
-            .via((String json) -> new Gson().fromJson(json, YourRecord.class)))
-        .apply("Window", Window.<YourRecord>into(FixedWindows.of(Duration.standardMinutes(1)))
-            .triggering(AfterWatermark.pastEndOfWindow())
-            .withAllowedLateness(Duration.ZERO)
-            .accumulatingFiredPanes());
+public class PubSubSparkIcebergApp {
 
-    parsed.apply("WriteParquet", FileIO.<YourRecord>write()
-        .via(ParquetIO.sink(YourRecord.class))
-        .to("gs://your-bucket/tmp/iceberg-buffer/")
-        .withPrefix("output-")
-        .withSuffix(".parquet")
-        .withNumShards(5));
+    private static final int BATCH_SIZE = 500;
+    private static final String ICEBERG_TABLE = "my_catalog.db.my_table";
 
-    pipeline.run().waitUntilFinish();
-}
+    private final List<String> buffer = Collections.synchronizedList(new ArrayList<>());
 
-// Sample POJO for ParquetIO
-public static class YourRecord {
-    public String id;
-    public String value;
-    public long timestamp;
-    // Getters, Setters, Constructors
-}
+    private final SparkSession spark = SparkSession.builder()
+            .appName("PubSubSparkIcebergApp")
+            .master("local[*]")
+            .config("spark.sql.catalog.my_catalog", "org.apache.iceberg.spark.SparkCatalog")
+            .config("spark.sql.catalog.my_catalog.type", "hive")
+            .config("spark.sql.catalog.my_catalog.uri", "thrift://hive-metastore:9083")
+            .config("spark.sql.catalog.my_catalog.warehouse", "gs://your-bucket/iceberg-warehouse/")
+            .config("spark.sql.catalog.my_catalog.io-impl", "org.apache.iceberg.gcp.gcs.GCSFileIO")
+            .getOrCreate();
 
-}
-
-// ------------------------------------ // PART 2: Spark Job to Write to Iceberg (MERGE INTO) // ------------------------------------
-
-public class IcebergSparkWriter {
-
-public static void main(String[] args) throws Exception {
-
-    String checkpointPath = "gs://your-bucket/checkpoints/last-folder.txt";
-    String bufferBasePath = "gs://your-bucket/tmp/iceberg-buffer/";
-
-    SparkSession spark = SparkSession.builder()
-        .appName("IcebergWriter")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkCatalog")
-        .config("spark.sql.catalog.spark_catalog.type", "hadoop")
-        .config("spark.sql.catalog.spark_catalog.warehouse", "gs://your-bucket/warehouse/")
-        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-        .getOrCreate();
-
-    FileSystem fs = FileSystem.get(new URI(bufferBasePath), spark.sparkContext().hadoopConfiguration());
-    Path latestFolder = findLatestFolder(fs, new Path(bufferBasePath), checkpointPath);
-
-    if (latestFolder != null) {
-        Dataset<Row> df = spark.read().parquet(latestFolder.toString());
-
-        // Create temp view for SQL merge
-        df.createOrReplaceTempView("staging_data");
-
-        spark.sql("""
-            MERGE INTO spark_catalog.db.iceberg_table t
-            USING staging_data s
-            ON t.id = s.id
-            WHEN MATCHED THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
-        """);
-
-        writeCheckpoint(fs, checkpointPath, latestFolder.toString());
+    public static void main(String[] args) {
+        PubSubSparkIcebergApp app = new PubSubSparkIcebergApp();
+        app.start("your-gcp-project", "your-subscription-id");
     }
 
-    spark.stop();
-}
+    public void start(String projectId, String subscriptionId) {
+        ProjectSubscriptionName subscriptionName = ProjectSubscriptionName.of(projectId, subscriptionId);
 
-private static Path findLatestFolder(FileSystem fs, Path basePath, String checkpointPath) throws IOException {
-    RemoteIterator<LocatedFileStatus> iter = fs.listFiles(basePath, true);
-    Path latest = null;
-    long latestTime = 0L;
-    while (iter.hasNext()) {
-        LocatedFileStatus file = iter.next();
-        Path folder = file.getPath().getParent();
-        long modTime = file.getModificationTime();
-        if (modTime > latestTime) {
-            latestTime = modTime;
-            latest = folder;
+        Subscriber subscriber = Subscriber.newBuilder(subscriptionName, this::receiveMessage).build();
+
+        subscriber.addListener(new Listener() {
+            @Override
+            public void failed(State from, Throwable failure) {
+                System.err.println("Subscriber error: " + failure.getMessage());
+            }
+        }, Executors.newSingleThreadExecutor());
+
+        subscriber.startAsync().awaitRunning();
+        System.out.println("Subscriber started...");
+    }
+
+    private void receiveMessage(PubsubMessage message, AckReplyConsumer consumer) {
+        String msg = message.getData().toStringUtf8();
+        buffer.add(msg);
+        consumer.ack();
+
+        if (buffer.size() >= BATCH_SIZE) {
+            List<String> batch;
+            synchronized (buffer) {
+                batch = new ArrayList<>(buffer);
+                buffer.clear();
+            }
+            appendToIceberg(batch);
         }
     }
-    return latest;
-}
 
-private static void writeCheckpoint(FileSystem fs, String checkpointPath, String folder) throws IOException {
-    FSDataOutputStream out = fs.create(new Path(checkpointPath), true);
-    out.writeBytes(folder);
-    out.close();
-}
+    private void appendToIceberg(List<String> messages) {
+        List<Row> rows = new ArrayList<>();
+        for (String msg : messages) {
+            rows.add(RowFactory.create(msg));
+        }
 
-}
+        StructType schema = new StructType().add("message", "string");
+        Dataset<Row> df = spark.createDataFrame(rows, schema);
 
+        df.writeTo(ICEBERG_TABLE).append();
+
+        System.out.println("Appended " + messages.size() + " messages to Iceberg");
+    }
+}
